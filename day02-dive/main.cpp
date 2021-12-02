@@ -1,26 +1,25 @@
 #include <fstream>
 #include <iostream>
-#include <regex>
 #include <vector>
 
 class Submarine {
    public:
-    void followCommands(const std::vector<std::string> &raw_commands) {
-        for (const auto &cmd : raw_commands) {
-            followCommand(cmd);
+    void followCommands(const std::vector<std::pair<std::string, int>> &commands) {
+        for (const auto &[cmd, units] : commands) {
+            followCommand(cmd, units);
         }
     }
 
-    virtual void followCommand(const std::string &raw_command) {
-        const auto [cmd, units] = Submarine::splitCommand(raw_command);
-
+    virtual void followCommand(const std::string &cmd, const int units) {
         if (cmd == "forward") {
             m_pos_horiz += units;
         } else if (cmd == "down") {
             m_depth += units;
-        } else {
+        } else if (cmd == "up") {
             // up
             m_depth -= units;
+        } else {
+            throw std::invalid_argument("Unknown command: "+cmd);
         }
     }
 
@@ -36,36 +35,23 @@ class Submarine {
     virtual ~Submarine() = default;
 
    protected:
-    // split command into command string and units
-    static std::pair<std::string, int> splitCommand(
-        const std::string &raw_command) {
-        // C++ regex actually has bad perf, but should be alright for this
-        const std::regex pattern{"^(forward|down|up) ([0-9]+)$"};
-        std::smatch match;
-        if (!std::regex_match(raw_command, match, pattern)) {
-            throw std::invalid_argument("Invalid raw command: " + raw_command);
-        }
-
-        return {match[1], std::stoi(match[2])};
-    }
-
     int m_pos_horiz{0};
     int m_depth{0};
 };
 
 class Submarine2 : public Submarine {
    public:
-    void followCommand(const std::string &raw_command) override {
-        const auto [cmd, units] = Submarine::splitCommand(raw_command);
-
+    void followCommand(const std::string &cmd, const int units) override {
         if (cmd == "down") {
             m_aim += units;
         } else if (cmd == "up") {
             m_aim -= units;
-        } else {
+        } else if (cmd == "forward") {
             // forward
             m_pos_horiz += units;
             m_depth += m_aim * units;
+        } else {
+            throw std::invalid_argument("Unknown command: "+cmd);
         }
     }
 
@@ -78,11 +64,12 @@ int main() {
     std::ifstream ifs(filename);
     if (!ifs) std::terminate();
 
-    std::vector<std::string> commands;
+    std::vector<std::pair<std::string, int>> commands;
     {
-        std::string line{};
-        while (std::getline(ifs, line)) {
-            commands.emplace_back(std::move(line));
+        std::string cmd{};
+        int units{};
+        while (ifs >> cmd >> units) {
+            commands.emplace_back(std::make_pair(std::move(cmd), units));
         }
     }
 

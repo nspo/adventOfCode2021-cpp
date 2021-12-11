@@ -35,8 +35,8 @@ int main() {
     using std::string;
     using std::vector;
 
-    const auto filename = "input_sample.txt";
-    // const auto filename = "input.txt";
+    // const auto filename = "input_sample.txt";
+    const auto filename = "input.txt";
     std::ifstream ifs(filename);
     if (!ifs) std::terminate();
 
@@ -101,5 +101,56 @@ int main() {
         std::cout << "Sum of lowest risks: " << sum_of_lowest_risks << "\n";
     }
 
-    
+    {
+        std::cout << " --- Part 2 ---\n";
+
+        const int rows = static_cast<int>(data.size());
+        const int cols = static_cast<int>(data[0].size());
+        vector<vector<bool>> visited(
+            rows, vector<bool>(cols, false));  // could also mark visited as 9 fields
+
+        auto find_basin_size = [&data, &is_valid, &visited](const Coord& low_point) -> int {
+            // find size of basin of low point with DFS
+
+            int num_points = 0;
+
+            auto dfs = [&](const int row, const int col, const int last_val, auto& dfs) -> void {
+                // DFS - only recurse if this point is valid and part of basin
+                // Must be called from low-point initially with last_val = -1
+                // Alternative would be to simply grow outwards until a 9 is encountered
+                if (!is_valid(row, col)) return;
+                if (visited[row][col]) return;
+                const int val = data[row][col];
+                if (val <= last_val || val == 9) return;
+
+                visited[row][col] = true;
+                ++num_points;
+
+                dfs(row - 1, col, val, dfs);
+                dfs(row + 1, col, val, dfs);
+                dfs(row, col - 1, val, dfs);
+                dfs(row, col + 1, val, dfs);
+            };
+
+            dfs(low_point.row, low_point.col, -1, dfs);
+            return num_points;
+        };
+
+        // find 3 largest basins
+        // could use a min-heap with size 3 for this... but not worth it for such a small map
+        vector<int> basin_sizes;
+        for (const auto& low_point : find_low_points()) {
+            basin_sizes.push_back(find_basin_size(low_point));
+        }
+        std::sort(basin_sizes.begin(), basin_sizes.end(),
+                  std::greater<>());  // so that largest are in front
+
+        const std::array<int, 3> largest_basins = {basin_sizes.at(0), basin_sizes.at(1),
+                                                   basin_sizes.at(2)};
+        std::cout << "3 largest basin sizes: ";
+        for (const int sz : largest_basins) std::cout << sz << " ";
+        std::cout << "\n";
+        const int prod = largest_basins[0] * largest_basins[1] * largest_basins[2];
+        std::cout << "Their product: " << prod << "\n";
+    }
 }

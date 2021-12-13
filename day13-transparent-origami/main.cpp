@@ -3,8 +3,10 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <numeric>
 #include <optional>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -25,159 +27,130 @@ std::vector<std::string> split(const std::string& s, const std::string& delimite
     return res;
 }
 
-struct Fold {
-    bool alongX;
-    int pos;
-};
-
 class Grid {
    public:
-    void addPoint(const int x, const int y) {
-        m_data[x][y] = true;
+    struct Fold {
+        bool alongX;
+        int pos;
+    };
+
+    void setPoint(const int x, const int y) {
+        m_data[x].insert(y);
         m_x_size = std::max(m_x_size, x);
         m_y_size = std::max(m_y_size, y);
     }
+
+    void print() const {
+        checkSize();
+
+        for (int y = 0; y < m_y_size; ++y) {
+            for (int x = 0; x < m_x_size; ++x) {
+                const auto it_col = m_data.find(x);
+                const bool filled = it_col != m_data.end() && it_col->second.contains(y);
+
+                if (filled)
+                    std::cout << "#";
+                else
+                    std::cout << " ";
+            }
+            std::cout << "\n";
+        }
+    }
+
+    int count_visible_dots() const {
+        checkSize();
+        int count = 0;
+        for (const auto& [x, column] : m_data) {
+            count += static_cast<int>(column.size());
+        }
+        return count;
+    }
+
+    void execute_fold(const Fold& fold) {
+        checkSize();
+
+        if (fold.alongX) {
+            fold_x(fold.pos);
+        } else {
+            fold_y(fold.pos);
+        }
+    }
+
    private:
-    std::unordered_map<int, std::unordered_map<int, bool>> m_data;
+    std::map<int, std::set<int>> m_data;
     int m_x_size{0};
     int m_y_size{0};
 
-    // void check() const {
-    //     if (m_x_size)
-    // }
-};
-
-using GridType = std::unordered_map<int, std::unordered_map<int, bool>>;
-
-void print(const GridType& grid) {
-    // calc size
-    int x_size = -1;
-    int y_size = -1;
-
-    for (const auto& [x, column] : grid) {
-        x_size = std::max(x_size, x + 1);
-        for (const auto& [y, val] : column) {
-            y_size = std::max(y_size, y + 1);
+    void checkSize() const {
+        if (m_x_size == 0 || m_y_size == 0) {
+            throw std::runtime_error("Size may not be 0 for this operation");
         }
     }
 
-    for (int y = 0; y < y_size; ++y) {
-        for (int x = 0; x < x_size; ++x) {
-            bool filled = false;
-            if (auto it_col = grid.find(x); it_col != grid.end()) {
-                // column at x exists
-                if (auto it_elem = it_col->second.find(y);
-                    it_elem != it_col->second.end() && it_elem->second == true) {
-                    // elem is defined and true
-                    filled = true;
-                }
+    // fold the grid part right of at_x left
+    void fold_x(const int at_x) {
+        assert(at_x > 0);
+
+        // walk through everything right of the vertical line at at_x
+        // project x-coord left and set cell there to true
+
+        const auto project_x_to_left = [at_x](const int x) -> int {
+            assert(x >= at_x);
+            const int dist = x - at_x;
+            const int new_x = at_x - dist;
+            assert(new_x >= 0);
+            return new_x;
+        };
+
+        for (const auto& [x, column] : m_data) {
+            if (x <= at_x) {
+                // should not be projected
+                continue;
             }
-
-            if (filled)
-                std::cout << "#";
-            else
-                std::cout << ".";
-        }
-        std::cout << "\n";
-    }
-}
-
-// fold the grid part right of at_x left
-void fold_x(GridType& grid, const int at_x) {
-    assert(at_x >= 0);
-
-    // walk through everything right of the vertical line at at_x
-    // project x-coord left and set cell there to true
-
-    const auto project_x_to_left = [at_x](const int x) -> int {
-        assert(x >= at_x);
-        const int dist = x - at_x;
-        const int new_x = at_x - dist;
-        assert(new_x >= 0);
-        return new_x;
-    };
-
-    std::vector<int> to_delete_x{at_x};
-    for (const auto& [x, column] : grid) {
-        if (x <= at_x) {
-            // should not be projected
-            continue;
-        }
-        // this column should be projected left
-        to_delete_x.push_back(x);
-        const int to_x = project_x_to_left(x);
-        for (const auto& [y, val] : column) {
-            if (val) {
-                grid[to_x][y] = true;
+            // this column should be projected left
+            const int to_x = project_x_to_left(x);
+            for (const int y : column) {
+                m_data[to_x].insert(y);
             }
         }
+
+        // delete the unnecessary columns which were folded
+        m_data.erase(m_data.lower_bound(at_x), m_data.end());
+
+        m_x_size = at_x;
     }
 
-    // delete the unnecessary columns which were folded
-    for (const int x : to_delete_x) {
-        grid.erase(x);
-    }
+    // fold the grid part below at_y up
+    void fold_y(const int at_y) {
+        assert(at_y > 0);
 
-    if (at_x > 0) {
-        // add a pseudo entry to make sure empty but existing lines are printed
-        grid[at_x - 1][0];
-    }
-}
+        const auto project_y_up = [at_y](const int y) -> int {
+            assert(y >= at_y);
+            const int dist = y - at_y;
+            const int new_y = at_y - dist;
+            assert(new_y >= 0);
+            return new_y;
+        };
 
-// fold the grid part below at_y up
-void fold_y(GridType& grid, const int at_y) {
-    assert(at_y >= 0);
+        std::vector<int> empty_x_columns;
+        for (auto& [x, column] : m_data) {
+            for (const int y : column) {
+                if (y <= at_y) continue;
 
-    const auto project_y_up = [at_y](const int y) -> int {
-        assert(y >= at_y);
-        const int dist = y - at_y;
-        const int new_y = at_y - dist;
-        // assert(new_y >= 0);
-        return new_y;
-    };
-
-    for (auto& [x, column] : grid) {
-        std::vector<int> to_delete_y{at_y};
-
-        for (const auto& [y, val] : column) {
-            if (y <= at_y) continue;
-
-            to_delete_y.push_back(y);
-            if (val) {
                 const int to_y = project_y_up(y);
-                grid[x][to_y] = true;
+                m_data[x].insert(to_y);
             }
+            column.erase(column.lower_bound(at_y), column.end());
+            if (column.size() == 0) empty_x_columns.push_back(x);
         }
-        for (const int y : to_delete_y) {
-            column.erase(y);
+
+        for (const int x : empty_x_columns) {
+            m_data.erase(x);
         }
-    }
 
-    if (at_y > 0) {
-        // add a pseudo entry to make sure empty but existing lines are printed
-        grid[0][at_y - 1];
+        m_y_size = at_y;
     }
-}
-
-void execute_fold(GridType& grid, const Fold& fold) {
-    if (fold.alongX) {
-        fold_x(grid, fold.pos);
-    } else {
-        fold_y(grid, fold.pos);
-    }
-}
-
-int count_visible_dots(const GridType& grid) {
-    int count = 0;
-    for (const auto& [x, column] : grid) {
-        for (const auto& [y, val] : column) {
-            if (val) {
-                ++count;
-            }
-        }
-    }
-    return count;
-}
+};
 
 int main() {
     using std::array;
@@ -189,8 +162,8 @@ int main() {
     std::ifstream ifs(filename);
     if (!ifs) std::terminate();
 
-    GridType grid;
-    vector<Fold> folds;
+    Grid grid;
+    vector<Grid::Fold> folds;
 
     {
         // read in lines
@@ -200,7 +173,7 @@ int main() {
             const auto splitted = split(line, ",");
             const int x = std::stoi(splitted.at(0));
             const int y = std::stoi(splitted.at(1));
-            grid[x][y] = true;
+            grid.setPoint(x, y);
         }
 
         while (std::getline(ifs, line)) {
@@ -208,17 +181,17 @@ int main() {
             const auto splitted = split(line, "fold along ");
             const bool alongX = splitted.at(1)[0] == 'x';
             const int pos = std::stoi(split(splitted.at(1), "=").at(1));
-            folds.emplace_back(Fold{.alongX = alongX, .pos = pos});
+            folds.emplace_back(Grid::Fold{.alongX = alongX, .pos = pos});
         }
 
-        std::cout << "Read grid with " << folds.size() << " folds\n";
+        std::cout << "Read grid and " << folds.size() << " folds\n";
     }
 
     {
         std::cout << " --- Part 1 ---\n";
 
-        execute_fold(grid, folds.at(0));
-        std::cout << "Count of visible dots after 1 fold: " << count_visible_dots(grid) << "\n";
+        grid.execute_fold(folds.at(0));
+        std::cout << "Count of visible dots after 1 fold: " << grid.count_visible_dots() << "\n";
     }
 
     {
@@ -230,8 +203,8 @@ int main() {
                 first = false;
                 continue;
             }
-            execute_fold(grid, fold);
+            grid.execute_fold(fold);
         }
-        print(grid);
+        grid.print();
     }
 }

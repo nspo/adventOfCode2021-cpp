@@ -27,30 +27,108 @@ std::vector<std::string> split(const std::string& s, const std::string& delimite
     return res;
 }
 
-class LookupHelper {
+using RawLookupType = std::unordered_map<std::string, char>;
+
+class LookupResult {
    public:
-    using RawLookupType = std::unordered_map<std::string, char>;
-    LookupHelper(RawLookupType subs) : m_subs{std::move(subs)} {}
+    std::unordered_map<char, size_t> count;  // count of chars in lookup
 
-    class LookupResult {
-       public:
-        std::unordered_map<char, size_t> count;  // count of chars in lookup
-
-        LookupResult& merge(const LookupResult& rhs) {
-            for (const auto [ch, ch_count] : rhs.count) {
-                this->count[ch] += ch_count;
-            }
-            return *this;
+    LookupResult& merge(const LookupResult& rhs) {
+        for (const auto [ch, ch_count] : rhs.count) {
+            this->count[ch] += ch_count;
         }
+        return *this;
+    }
 
-        friend std::ostream& operator<<(std::ostream& os, const LookupResult& obj) {
-            for (const auto [ch, ch_count] : obj.count) {
-                os << ch << " (" << ch_count << ") ";
-            }
-            os << "\n";
-            return os;
+    friend std::ostream& operator<<(std::ostream& os, const LookupResult& obj) {
+        for (const auto [ch, ch_count] : obj.count) {
+            os << ch << " (" << ch_count << ") ";
         }
+        os << "\n";
+        return os;
+    }
+
+    struct CountResult {
+        char most_common;
+        size_t most_common_count;
+        char least_common;
+        size_t least_common_count;
     };
+
+    CountResult count_common() const {
+        assert(count.size() > 0);
+
+        char most_common{};
+        size_t most_common_count{0};
+        char least_common{};
+        size_t least_common_count{std::numeric_limits<size_t>::max()};
+        for (const auto [ch, count] : count) {
+            if (count > most_common_count) {
+                most_common_count = count;
+                most_common = ch;
+            }
+            if (count < least_common_count) {
+                least_common_count = count;
+                least_common = ch;
+            }
+        }
+
+        return CountResult{.most_common = most_common,
+                           .most_common_count = most_common_count,
+                           .least_common = least_common,
+                           .least_common_count = least_common_count};
+    };
+
+    void print_stats() {
+        const auto counted = count_common();
+        std::cout << "Most common: " << counted.most_common << " (" << counted.most_common_count
+                  << "), least common: " << counted.least_common << " ("
+                  << counted.least_common_count << ")\n";
+        std::cout << "Difference: " << counted.most_common_count << " - "
+                  << counted.least_common_count << " = "
+                  << counted.most_common_count - counted.least_common_count << "\n";
+    };
+};
+
+LookupResult lookupPolymerByFreqCount(const std::string& polymer, const RawLookupType& subs,
+                                      const int steps) {
+    // more efficient solution than below
+    assert(polymer.size() >= 2);
+    assert(steps >= 0);
+    using std::string;
+
+    // init pair and letter count
+    std::unordered_map<std::string, size_t> freq_pairs;  // number of pairs like NN
+    std::unordered_map<char, size_t> freq_char;          // number of chars like N
+
+    ++freq_char[polymer[0]];
+    for (size_t i = 1; i < polymer.size(); ++i) {
+        ++freq_pairs[string{polymer[i - 1], polymer[i]}];
+        ++freq_char[polymer[i]];
+    }
+
+    // perform steps
+    for (int i = 0; i < steps; ++i) {
+        // create completely new count of pairs as they are replaced but only increase letter count
+        std::unordered_map<std::string, size_t> new_freq_pairs;
+
+        for (const auto [pair, pair_count] : freq_pairs) {
+            assert(subs.find(pair) != subs.end());
+            const char ch_new = subs.find(pair)->second;
+            freq_char[ch_new] += pair_count;
+            new_freq_pairs[string{pair[0], ch_new}] += pair_count;
+            new_freq_pairs[string{ch_new, pair[1]}] += pair_count;
+        }
+        std::swap(new_freq_pairs, freq_pairs);
+    }
+
+    return LookupResult{.count = freq_char};
+}
+
+class LookupHelper {
+    // solution which uses dynamic programming + memoization
+   public:
+    LookupHelper(RawLookupType subs) : m_subs{std::move(subs)} {}
 
     // count chars after iterating on whole string for steps
     LookupResult count_all(const std::string& s, const int steps) {
@@ -134,59 +212,23 @@ int main() {
         }
     }
 
-    struct CountResult {
-        char most_common;
-        size_t most_common_count;
-        char least_common;
-        size_t least_common_count;
-    };
-
-    const auto count_common = [](const LookupHelper::LookupResult& res) -> CountResult {
-        assert(res.count.size() > 1);
-
-        char most_common{};
-        size_t most_common_count{0};
-        char least_common{};
-        size_t least_common_count{std::numeric_limits<size_t>::max()};
-        for (const auto [ch, count] : res.count) {
-            if (count > most_common_count) {
-                most_common_count = count;
-                most_common = ch;
-            }
-            if (count < least_common_count) {
-                least_common_count = count;
-                least_common = ch;
-            }
-        }
-
-        return CountResult{.most_common = most_common,
-                           .most_common_count = most_common_count,
-                           .least_common = least_common,
-                           .least_common_count = least_common_count};
-    };
-
-    const auto print_stats = [&count_common](const LookupHelper::LookupResult& res) -> void {
-        const auto counted = count_common(res);
-        std::cout << "Most common: " << counted.most_common << " (" << counted.most_common_count
-                  << "), least common: " << counted.least_common << " ("
-                  << counted.least_common_count << ")\n";
-        std::cout << "Difference: " << counted.most_common_count << " - "
-                  << counted.least_common_count << " = "
-                  << counted.most_common_count - counted.least_common_count << "\n";
-    };
-
     LookupHelper look(substitutions);
     {
         std::cout << " --- Part 1 ---\n";
 
         std::cout << "After 10 steps:\n";
-        print_stats(look.count_all(polymer, 10));
+        look.count_all(polymer, 10).print_stats();
+        std::cout << "\nUsing frequency count:\n";
+        lookupPolymerByFreqCount(polymer, substitutions, 10).print_stats();
     }
 
     {
         std::cout << " --- Part 2 ---\n";
 
         std::cout << "After 40 steps:\n";
-        print_stats(look.count_all(polymer, 40));
+        look.count_all(polymer, 40).print_stats();
+
+        std::cout << "\nUsing frequency count:\n";
+        lookupPolymerByFreqCount(polymer, substitutions, 40).print_stats();
     }
 }

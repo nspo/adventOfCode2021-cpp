@@ -36,7 +36,7 @@ struct Packet {
     int version;
     int type_id;
     // may only contain either literal OR packets
-    std::optional<int> literal;
+    std::optional<size_t> literal;
     std::vector<Packet> packets;
 
     void check() const {
@@ -149,8 +149,8 @@ int parse_int(const std::vector<bool>& bin, size_t& idx, const size_t len) {
 }
 
 // parse literal value of unknown length
-int parse_literal(const std::vector<bool>& bin, size_t& idx) {
-    int val = 0;
+size_t parse_literal(const std::vector<bool>& bin, size_t& idx) {
+    size_t val = 0;
 
     bool last_group_found = false;
     while (!last_group_found) {
@@ -204,6 +204,73 @@ int version_sum(const Packet& packet) {
     return sum;
 }
 
+size_t evaluate(const Packet& packet) {
+    size_t result = 0;
+
+    // could also reduce
+    switch (packet.type_id) {
+        case 0: {
+            // sum
+            for (const Packet& subp : packet.packets) {
+                result += evaluate(subp);
+            }
+            break;
+        }
+        case 1: {
+            // product
+            result = 1;
+            for (const Packet& subp : packet.packets) {
+                result *= evaluate(subp);
+            }
+            break;
+        }
+        case 2: {
+            // minimum
+            result = std::numeric_limits<decltype(result)>::max();
+            for (const Packet& subp : packet.packets) {
+                result = std::min(result, evaluate(subp));
+            }
+            break;
+        }
+        case 3: {
+            // maximum
+            result = std::numeric_limits<decltype(result)>::min();
+            for (const Packet& subp : packet.packets) {
+                result = std::max(result, evaluate(subp));
+            }
+            break;
+        }
+        case 4: {
+            // literal
+            assert(packet.literal.has_value());
+            result = packet.literal.value();
+            break;
+        }
+        case 5: {
+            // greater than
+            assert(packet.packets.size() == 2);
+            result = evaluate(packet.packets[0]) > evaluate(packet.packets[1]) ? 1 : 0;
+            break;
+        }
+        case 6: {
+            // less than
+            assert(packet.packets.size() == 2);
+            result = evaluate(packet.packets[0]) < evaluate(packet.packets[1]) ? 1 : 0;
+            break;
+        }
+        case 7: {
+            // equal to
+            assert(packet.packets.size() == 2);
+            result = evaluate(packet.packets[0]) == evaluate(packet.packets[1]) ? 1 : 0;
+            break;
+        }
+        default: {
+            throw std::runtime_error("Unknown type id");
+        }
+    }
+    return result;
+}
+
 int main() {
     using std::array;
     using std::string;
@@ -222,12 +289,18 @@ int main() {
         data = hex2bin(line);
     }
 
+    const Packet top_packet = [&data]() {
+        size_t i = 0;
+        return parse_packet(data, i);
+    }();
+
     {
         std::cout << " --- Part 1 ---\n";
-        size_t i = 0;
-        const Packet top_packet = parse_packet(data, i);
         std::cout << "Version sum: " << version_sum(top_packet) << "\n";
     }
 
-    { std::cout << " --- Part 2 ---\n"; }
+    {
+        std::cout << " --- Part 2 ---\n";
+        std::cout << "Evaluated: " << evaluate(top_packet) << "\n";
+    }
 }

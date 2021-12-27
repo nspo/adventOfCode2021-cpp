@@ -197,9 +197,6 @@ std::vector<std::vector<ScannerMatchResult>> compare_beacons(
             for (size_t i2 = i1 + 1; i2 < scanner_data.size(); ++i2) {
                 const auto match_result = best_match(rotated_beacons, scanner_data[i2]);
                 if (match_result.count_matches >= 12) {
-                    // std::cout << match_result.count_matches << " matches between " << i1 << " and "
-                    //           << i2 << "\n";
-
                     graph[i1].emplace_back(ScannerMatchResult{
                         .translation = match_result.delta, .rotation = rot, .other = i2});
                     graph[i2].emplace_back(ScannerMatchResult{
@@ -234,52 +231,84 @@ bool is_valid_result(const std::vector<std::vector<ScannerMatchResult>>& graph) 
     return std::all_of(visited.begin(), visited.end(), [](const bool b) -> bool { return b; });
 }
 
-std::unordered_set<Vec3> build_beacon_map(const std::vector<std::vector<ScannerMatchResult>>& graph,
-                                          const std::vector<std::vector<Vec3>>& scanner_data) {
-    using std::vector;
-    std::unordered_set<Vec3> map;
+struct Transform {
+    Vec3 translation{};  // translation from scanner 0 to this (in scanner 0 coordinates)
+    Rot rotation = ROTATION_IDENTITY;  // rotation from scanner 0 to this (in scanner 0 coordinates)
 
-    (void)graph;
-    (void)scanner_data;
+    /// apply in forward direction
+    Vec3 apply(Vec3 vec) const {
+        vec = add(vec, translation);
+        vec = rotate(rotation, vec);
+        return vec;
+    }
+
+    /// apply in backward direction
+    Vec3 unapply(Vec3 vec) const {
+        vec = rotate(transpose(rotation), vec);
+        vec = subtract(vec, translation);
+        return vec;
+    }
+};
+
+/// Build tree of transformations. Uses scanner 0 as reference.
+std::vector<Transform> build_tf_tree(const std::vector<std::vector<ScannerMatchResult>>& graph) {
+    using std::vector;
+    vector<Transform> transforms(graph.size());
 
     vector<bool> visited(graph.size(), false);
 
-    struct QueueElem {
-        Vec3 translation;  // translation from scanner 0 to this (in scanner 0 coordinates)
-        Rot rotation;      // rotation from scanner 0 to this (in scanner 0 coordinates)
-        size_t i;          // index of this scanner
-    };
-
-    std::queue<QueueElem> queue;
-    queue.emplace(QueueElem{.translation = Vec3{}, .rotation = ROTATION_IDENTITY, .i = 0});
+    // add index of next scanner to queue when the translation from 0 to it was found
+    std::queue<size_t> queue;
+    transforms[0] = Transform{};
+    queue.emplace(0);
 
     while (!queue.empty()) {
-        const QueueElem elem = queue.front();
+        const size_t i = queue.front();
         queue.pop();
-        if (visited[elem.i]) continue;
+        if (visited[i]) continue;
 
-        visited[elem.i] = true;
-        // std::cout << "P in 0 to P in " << elem.i << ": translation=" << elem.translation
-        //           << ", then rotation=" << elem.rotation << "\n";
-        // add all beacons to map
-        for (Vec3 point : scanner_data[elem.i]) {
-            point = rotate(transpose(elem.rotation), point);
-            point = subtract(point, elem.translation);
-
-            map.insert(point);
-        }
+        visited[i] = true;
 
         // add matches which can be reached via this match to queue
-        for (const auto& nb_match : graph[elem.i]) {
-            Rot new_rotation = mult(nb_match.rotation, elem.rotation);
-            Vec3 new_translation =
-                add(elem.translation, rotate(transpose(new_rotation), nb_match.translation));
-            queue.emplace(QueueElem{
-                .translation = new_translation, .rotation = new_rotation, .i = nb_match.other});
+        for (const auto& nb_match : graph[i]) {
+            Rot new_rotation = mult(nb_match.rotation, transforms[i].rotation);
+            Vec3 new_translation = add(transforms[i].translation,
+                                       rotate(transpose(new_rotation), nb_match.translation));
+
+            transforms[nb_match.other] =
+                Transform{.translation = new_translation, .rotation = new_rotation};
+            queue.emplace(nb_match.other);
+        }
+    }
+
+    return transforms;
+}
+
+// Builds the set of all beacons in S0 coordinates
+std::unordered_set<Vec3> build_beacon_map(const std::vector<Transform>& transforms,
+                                          const std::vector<std::vector<Vec3>>& scanner_data) {
+    std::unordered_set<Vec3> map;
+
+    for (size_t i = 0; i < scanner_data.size(); ++i) {
+        for (Vec3 point : scanner_data[i]) {
+            point = transforms[i].unapply(point);
+            map.insert(point);
         }
     }
 
     return map;
+}
+
+int largest_manhattan_distance(const std::vector<Transform>& transforms) {
+    int max_dist = 0;
+    for (size_t i1 = 0; i1 < transforms.size(); ++i1) {
+        for (size_t i2 = i1 + 1; i2 < transforms.size(); ++i2) {
+            const Vec3 delta = subtract(transforms[i2].translation, transforms[i1].translation);
+            max_dist =
+                std::max(max_dist, std::abs(delta[0]) + std::abs(delta[1]) + std::abs(delta[2]));
+        }
+    }
+    return max_dist;
 }
 
 int main() {
@@ -310,19 +339,26 @@ int main() {
         std::cout << "Read beacons from " << scanner_data.size() << " scanners\n";
     }
 
+    const auto matches = compare_beacons(scanner_data);
+    if (is_valid_result(matches)) {
+        std::cout << "Found valid match for all scanners!\n";
+    } else {
+        throw std::runtime_error("Could not build transformation tree between all scanners");
+    }
+
+    const auto transforms = build_tf_tree(matches);
+
     {
         std::cout << " --- Part 1 ---\n";
 
-        const auto matches = compare_beacons(scanner_data);
-        if (is_valid_result(matches)) {
-            std::cout << "Found valid match for all scanners!\n";
-        } else {
-            throw std::runtime_error("Could not build transformation tree between all scanners");
-        }
-
-        const auto beacon_map = build_beacon_map(matches, scanner_data);
+        const auto beacon_map = build_beacon_map(transforms, scanner_data);
         std::cout << beacon_map.size() << " beacons found in finished map\n";
     }
 
-    { std::cout << " --- Part 2 ---\n"; }
+    {
+        std::cout << " --- Part 2 ---\n";
+
+        std::cout << "Largest Manhattan distance: " << largest_manhattan_distance(transforms)
+                  << "\n";
+    }
 }
